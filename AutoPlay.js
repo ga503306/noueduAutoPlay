@@ -114,9 +114,11 @@
         nextItem.li.style.backgroundColor = "#fff7e6";
         nextItem.li.scrollIntoView({ block: "center" });
       }
-
-      // 點擊下一個項目
-      nextItem.a.click();
+      // 綁定後延遲 1 秒自動播放影片
+      setTimeout(function () {
+       // 點擊下一個項目
+        nextItem.a.click();
+      }, 20000); // 20000 毫秒 = 20 秒
     });
 
     console.log("已自動綁定 video：", video);
