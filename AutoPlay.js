@@ -1,50 +1,69 @@
 (() => {
+  const STORAGE_KEY = "autoClickCourseItemId";
+  const CLICK_DELAY_MS = 3000;
+  const BIND_INTERVAL_MS = 1000;
+  const PLAY_DELAY_MS = 1000;
+  const RESUME_CLICK_DELAY_MS = 1000;
+
   /**
-   * 在目前視窗與所有 iframe 裡尋找包含左側目錄 #displayPanel 的 document
+   * 在目前視窗與所有 iframe 裡尋找符合 selector 的第一個元素。
+   * 遇到跨網域 iframe 時會略過。
+   */
+  function findElementDeep(selector, win = window) {
+    try {
+      const element = win.document.querySelector(selector);
+      if (element) {
+        return element;
+      }
+
+      for (let i = 0; i < win.frames.length; i++) {
+        const found = findElementDeep(selector, win.frames[i]);
+        if (found) {
+          return found;
+        }
+      }
+    } catch (error) {
+      return null;
+    }
+
+    return null;
+  }
+
+  /**
+   * 在目前視窗與所有 iframe 裡尋找包含左側目錄 #displayPanel 的 document。
    */
   window.findCatalogDoc = function findCatalogDoc(win = window) {
     try {
-      // 如果目前視窗的 document 裡有左側目錄，就回傳這個 document
-      if (win.document.querySelector("#displayPanel")) return win.document;
+      if (win.document.querySelector("#displayPanel")) {
+        return win.document;
+      }
 
-      // 遞迴搜尋所有 iframe
       for (let i = 0; i < win.frames.length; i++) {
         const doc = findCatalogDoc(win.frames[i]);
-        if (doc) return doc;
+        if (doc) {
+          return doc;
+        }
       }
-    } catch {}
+    } catch (error) {
+      return null;
+    }
 
-    // 找不到或跨網域存取失敗時回傳 null
     return null;
   };
 
   /**
-   * 在目前視窗與所有 iframe 裡尋找 video 元素
+   * 在目前視窗與所有 iframe 裡尋找 video 元素。
    */
-  window.findVideo = function findVideo(win = window) {
-    try {
-      // 如果目前 document 有 video，就回傳
-      const video = win.document.querySelector("video");
-      if (video) return video;
-
-      // 遞迴搜尋所有 iframe
-      for (let i = 0; i < win.frames.length; i++) {
-        const found = findVideo(win.frames[i]);
-        if (found) return found;
-      }
-    } catch {}
-
-    // 找不到或跨網域存取失敗時回傳 null
-    return null;
+  window.findVideo = function findVideo() {
+    return findElementDeep("video");
   };
 
   /**
-   * 取得左側課程目錄中的所有課程項目
+   * 取得左側課程目錄中的所有課程項目。
    */
   window.getCourseItems = function getCourseItems() {
     const doc = window.findCatalogDoc();
 
-    // 找不到左側目錄時，回傳空陣列
     if (!doc) {
       console.log("找不到左側目錄 #displayPanel");
       return [];
@@ -64,16 +83,15 @@
           a,
         };
       })
-      // 過濾掉沒有 title 或文字內容的項目
-      .filter(item => item.title || item.text);
+      .filter((item) => item.title || item.text);
   };
 
   /**
-   * 取得目前選取的課程項目，以及下一個課程項目
+   * 取得目前選取的課程項目，以及下一個課程項目。
    */
   window.getCurrentAndNextItem = function getCurrentAndNextItem() {
     const items = window.getCourseItems();
-    const currentIndex = items.findIndex(item => item.selected);
+    const currentIndex = items.findIndex((item) => item.selected);
 
     return {
       items,
@@ -84,16 +102,89 @@
   };
 
   /**
-   * 綁定目前影片的 ended 事件
-   * 影片播放結束後，標示並點擊下一個課程項目
+   * 標示下一個項目，方便確認稍後要點擊的節點。
+   */
+  window.markCourseItem = function markCourseItem(item) {
+    if (!item?.li) {
+      return;
+    }
+
+    item.li.style.outline = "3px solid #ff9800";
+    item.li.style.backgroundColor = "#fff7e6";
+    item.li.scrollIntoView({ block: "center" });
+  };
+
+  /**
+   * 儲存稍後要點擊的課程項目。
+   * 如果平台觸發 location.reload()，reload 後仍可恢復。
+   */
+  window.rememberCourseItemToClick = function rememberCourseItemToClick(item) {
+    if (!item?.id) {
+      return false;
+    }
+
+    sessionStorage.setItem(STORAGE_KEY, item.id);
+    console.log("已記住 reload 後要點擊的項目:", item.id, item.title || item.text);
+    return true;
+  };
+
+  /**
+   * 點擊課程項目。
+   */
+  window.clickCourseItem = function clickCourseItem(item) {
+    if (!item?.a) {
+      console.log("沒有可點擊的下一個項目");
+      return false;
+    }
+
+    window.rememberCourseItemToClick(item);
+    item.a.click();
+    return true;
+  };
+
+  /**
+   * reload 後自動恢復原本準備點擊的課程項目。
+   */
+  window.resumeAutoClickAfterReload = function resumeAutoClickAfterReload() {
+    const itemId = sessionStorage.getItem(STORAGE_KEY);
+    if (!itemId) {
+      return false;
+    }
+
+    const doc = window.findCatalogDoc();
+    if (!doc) {
+      return false;
+    }
+
+    const li = doc.getElementById(itemId);
+    const a = li?.querySelector("a[title]");
+
+    if (!a) {
+      return false;
+    }
+
+    sessionStorage.removeItem(STORAGE_KEY);
+
+    console.log("reload 後恢復點擊:", itemId, a.title || a.innerText);
+
+    setTimeout(() => {
+      a.click();
+    }, RESUME_CLICK_DELAY_MS);
+
+    return true;
+  };
+
+  /**
+   * 綁定目前影片的 ended 事件。
+   * 影片播放結束後，先記住下一個項目，等待平台 60 秒紀錄，再點擊下一個項目。
    */
   window.bindCurrentVideoReminder = function bindCurrentVideoReminder() {
     const video = window.findVideo();
 
-    // 找不到 video 時不綁定
-    if (!video) return false;
+    if (!video) {
+      return false;
+    }
 
-    // 避免同一個 video 重複綁定 ended 事件
     if (video.dataset.endedReminderBound === "1") {
       return true;
     }
@@ -108,53 +199,53 @@
       console.log("目前項目:", currentItem);
       console.log("下一個項目:", nextItem);
 
-      // 如果有下一個項目，標示它並捲動到畫面中央
-      if (nextItem?.li) {
-        nextItem.li.style.outline = "3px solid #ff9800";
-        nextItem.li.style.backgroundColor = "#fff7e6";
-        nextItem.li.scrollIntoView({ block: "center" });
+      if (!nextItem?.a) {
+        console.log("已經沒有下一個課程項目");
+        return;
       }
-      // 平台上的學習節數紀錄為60秒一次，避免沒觸發到
-      setTimeout(function () {
-       // 點擊下一個項目
-        nextItem.a.click();
-      }, 65000); // 65000 毫秒 = 65 秒
+
+      window.markCourseItem(nextItem);
+      window.rememberCourseItemToClick(nextItem);
+
+      setTimeout(() => {
+        window.clickCourseItem(nextItem);
+      }, CLICK_DELAY_MS);
     });
 
-    console.log("已自動綁定 video：", video);
+    console.log("已自動綁定 video:", video);
 
-    // 綁定後延遲 1 秒自動播放影片
-    setTimeout(function () {
-      video.play();
-    }, 1000); // 1000 毫秒 = 1 秒
+    setTimeout(() => {
+      video.play().catch((error) => {
+        console.log("影片自動播放失敗，可能需要手動點播放:", error);
+      });
+    }, PLAY_DELAY_MS);
 
     return true;
   };
 
   /**
-   * 啟動自動重綁機制
-   * 每秒重新嘗試尋找並綁定目前的 video
+   * 啟動自動重綁機制。
+   * 每秒重新嘗試尋找並綁定目前的 video。
    */
   window.startAutoRebindVideoReminder = function startAutoRebindVideoReminder() {
-    // 如果 timer 已存在，代表已經啟動
     if (window.videoReminderTimer) {
       console.log("自動重綁已經啟動");
       return;
     }
 
-    // 先立即綁定一次
+    window.resumeAutoClickAfterReload();
     window.bindCurrentVideoReminder();
 
-    // 每秒嘗試重新綁定一次
     window.videoReminderTimer = setInterval(() => {
+      window.resumeAutoClickAfterReload();
       window.bindCurrentVideoReminder();
-    }, 1000);
+    }, BIND_INTERVAL_MS);
 
     console.log("已啟動 top-frame 自動重綁影片結束提醒");
   };
 
   /**
-   * 停止自動重綁機制
+   * 停止自動重綁機制。
    */
   window.stopAutoRebindVideoReminder = function stopAutoRebindVideoReminder() {
     clearInterval(window.videoReminderTimer);
@@ -163,6 +254,5 @@
     console.log("已停止自動重綁");
   };
 
-  // 立即啟動自動重綁
   window.startAutoRebindVideoReminder();
 })();
